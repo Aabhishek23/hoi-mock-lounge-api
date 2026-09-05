@@ -336,27 +336,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^lounge-visits/enquiri
     ]);
 }
 
-// Handle: GET / (API Info Page)
+// Handle: GET /logs (Fetch activity logs)
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && str_ends_with($path, 'logs')) {
+    $logs = readJSON(LOGS_FILE);
+    respond(200, ['success' => true, 'logs' => $logs]);
+}
+
+// Handle: GET / (Redirect to Dashboard UI)
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && (
     $path === '' ||
     $path === 'index.php' ||
     str_ends_with($path, 'mock_lounge_server') ||
     str_ends_with($path, 'mock_lounge_server/index.php')
 )) {
-    $logs = readJSON(LOGS_FILE);
-    respond(200, [
-        'name' => 'HOI Mock Client API Server',
-        'version' => '1.0.0',
-        'status' => 'RUNNING',
-        'endpoints' => [
-            'POST /auth/register' => 'Register new user',
-            'POST /auth/login' => 'Login and get Bearer JWT Token',
-            'POST /qr/generate' => 'Generate new QR Enquiry (requires token)',
-            'POST /lounge-visits/enquiries/{id}' => 'Validate token & complete lounge visit (requires token)'
-        ],
-        'recent_activity_count' => count($logs),
-        'server_time' => date('Y-m-d H:i:s')
-    ]);
+    // Redirect to Beautiful Dashboard UI
+    header('Location: /dashboard.php');
+    exit;
 }
 
 // 404 Fallback
