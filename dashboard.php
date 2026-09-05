@@ -424,7 +424,8 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
 
             <!-- Tabs -->
             <div class="tabs">
-                <button class="tab-btn active" onclick="switchTab('login')">Login</button>
+                <button class="tab-btn active" onclick="switchTab('login')">User Login</button>
+                <button class="tab-btn" onclick="switchTab('oauth')">OAuth 2.0 (B2B)</button>
                 <button class="tab-btn" onclick="switchTab('register')">Register</button>
             </div>
 
@@ -440,6 +441,24 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
                     <input type="password" id="loginPass" value="test123" placeholder="••••••••">
                 </div>
                 <button class="btn" onclick="doLogin()">Login & Get Token</button>
+            </div>
+
+            <!-- OAuth 2.0 (B2B) -->
+            <div class="tab-pane" id="tab-oauth">
+                <div class="alert" id="oauthAlert"></div>
+                <div class="form-group">
+                    <label>Client ID</label>
+                    <input type="text" id="oauthClientId" value="client_hoi_prod" placeholder="client_hoi_prod">
+                </div>
+                <div class="form-group">
+                    <label>Client Secret</label>
+                    <input type="password" id="oauthClientSecret" value="secret_hoi_lounge_2024_key" placeholder="••••••••">
+                </div>
+                <div class="form-group">
+                    <label>Grant Type</label>
+                    <input type="text" id="oauthGrantType" value="client_credentials" readonly style="opacity:0.7;">
+                </div>
+                <button class="btn btn-purple" onclick="doOAuthLogin()">Get B2B OAuth 2.0 Token</button>
             </div>
 
             <!-- Register -->
@@ -462,9 +481,15 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
 
             <!-- Token Display -->
             <div style="margin-top: 18px;">
-                <label>🔑 Bearer Token (Valid 1 Hour)</label>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
+                    <label style="margin:0;">🔑 Bearer Token (Valid 1 Hour)</label>
+                    <span id="autoRefreshBadge" style="font-size:0.75rem; color:var(--green); display:none;">⚡ Auto-Refresh Active</span>
+                </div>
                 <div class="token-box" id="tokenBox">—</div>
-                <button class="copy-btn" id="copyBtn" onclick="copyToken()">📋 Copy Token</button>
+                <div style="display:flex; gap: 8px; margin-top: 8px;">
+                    <button class="copy-btn" id="copyBtn" onclick="copyToken()">📋 Copy Token</button>
+                    <button class="copy-btn" id="refreshBtn" onclick="doRefreshToken()" style="display:none; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border-color: rgba(59, 130, 246, 0.4);">🔄 Refresh Token Now</button>
+                </div>
             </div>
         </div>
 
@@ -528,7 +553,18 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
         <div class="endpoint-row">
             <span class="method-badge method-post">POST</span>
             <span class="endpoint-path">/auth/login</span>
-            <span style="font-size:0.82rem; color: var(--muted);">Login & get Bearer JWT Token</span>
+            <span style="font-size:0.82rem; color: var(--muted);">User Login & get Bearer JWT Token</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-post" style="background: rgba(124, 58, 237, 0.2); color: #a78bfa;">POST</span>
+            <span class="endpoint-path">/oauth/token</span>
+            <span style="font-size:0.82rem; color: var(--muted);">OAuth 2.0 Client Credentials Grant (B2B)</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-post" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa;">POST</span>
+            <span class="endpoint-path">/auth/refresh</span>
+            <span style="font-size:0.82rem; color: var(--muted);">Proactive Token Auto-Refresh / Extension</span>
+            <span class="badge-auth">🔒 Token Required</span>
         </div>
         <div class="endpoint-row">
             <span class="method-badge method-post">POST</span>
@@ -551,22 +587,115 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
     const BASE = window.location.origin + SCRIPT_DIR;
     let bearerToken = '';
 
+    let refreshTimer = null;
+
     // ─── Tab Switch ───
     function switchTab(tab) {
+        const tabs = ['login', 'oauth', 'register'];
         document.querySelectorAll('.tab-btn').forEach((b, i) => {
-            b.classList.toggle('active', (i === 0 && tab === 'login') || (i === 1 && tab === 'register'));
+            b.classList.toggle('active', tabs[i] === tab);
         });
-        document.getElementById('tab-login').classList.toggle('active', tab === 'login');
-        document.getElementById('tab-register').classList.toggle('active', tab === 'register');
+        tabs.forEach(t => {
+            const el = document.getElementById('tab-' + t);
+            if (el) el.classList.toggle('active', t === tab);
+        });
     }
 
     // ─── Show Alert ───
     function showAlert(id, msg, type) {
         const el = document.getElementById(id);
+        if (!el) return;
         el.textContent = msg;
         el.className = `alert ${type}`;
         el.style.display = 'block';
         setTimeout(() => el.style.display = 'none', 4000);
+    }
+
+    // ─── Token Setup Helper ───
+    function onTokenReceived(token, sourceMsg) {
+        bearerToken = token;
+
+        // Display Token
+        const tokenBox = document.getElementById('tokenBox');
+        tokenBox.style.display = 'block';
+        tokenBox.textContent = bearerToken;
+        document.getElementById('copyBtn').style.display = 'block';
+        document.getElementById('refreshBtn').style.display = 'block';
+        document.getElementById('autoRefreshBadge').style.display = 'inline-block';
+
+        // Enable QR
+        document.getElementById('qrBtn').disabled = false;
+        document.getElementById('qrAuthAlert').style.display = 'none';
+
+        // Start Proactive Auto-Refresh (55 minutes = 3300 seconds)
+        startProactiveAutoRefresh();
+
+        fetchLogs();
+    }
+
+    // ─── Proactive Auto-Refresh Timer (Every 55 mins) ───
+    function startProactiveAutoRefresh() {
+        if (refreshTimer) clearInterval(refreshTimer);
+        // Auto refresh every 55 minutes (3300000 ms) before 1h expiry
+        refreshTimer = setInterval(() => {
+            console.log("⚡ [Auto-Refresh] Proactively renewing token before expiry...");
+            doRefreshToken(true);
+        }, 55 * 60 * 1000);
+    }
+
+    // ─── Manual or Auto Refresh Token ───
+    async function doRefreshToken(isAuto = false) {
+        if (!bearerToken) return;
+        try {
+            const res = await fetch(`${BASE}/auth/refresh`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${bearerToken}`
+                }
+            });
+            const data = await res.json();
+            if (data.success && data.data && data.data.access_token) {
+                bearerToken = data.data.access_token;
+                document.getElementById('tokenBox').textContent = bearerToken;
+                document.getElementById('autoRefreshBadge').textContent = '⚡ Token Refreshed at ' + new Date().toLocaleTimeString();
+                if (!isAuto) showAlert('loginAlert', '🔄 Token refreshed successfully!', 'success');
+            } else {
+                if (!isAuto) showAlert('loginAlert', 'Refresh failed. Please login again.', 'error');
+            }
+        } catch (e) {
+            console.error("Refresh error:", e);
+        }
+    }
+
+    // ─── B2B OAuth 2.0 Login ───
+    async function doOAuthLogin() {
+        const clientId = document.getElementById('oauthClientId').value.trim();
+        const clientSecret = document.getElementById('oauthClientSecret').value.trim();
+        const grantType = document.getElementById('oauthGrantType').value.trim();
+
+        if (!clientId || !clientSecret) return showAlert('oauthAlert', 'Client ID aur Client Secret daalen!', 'error');
+
+        try {
+            const res = await fetch(`${BASE}/oauth/token`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    grant_type: grantType,
+                    client_id: clientId,
+                    client_secret: clientSecret
+                })
+            });
+            const data = await res.json();
+            if (data.access_token) {
+                onTokenReceived(data.access_token);
+                showAlert('oauthAlert', `✅ B2B OAuth 2.0 Token Issued!`, 'success');
+            } else {
+                showAlert('oauthAlert', data.error_description || 'OAuth Failed!', 'error');
+            }
+        } catch (e) {
+            showAlert('oauthAlert', 'Network Error: ' + e.message, 'error');
+        }
     }
 
     // ─── Register ───
@@ -612,20 +741,8 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
             });
             const data = await res.json();
             if (data.success) {
-                bearerToken = data.data.access_token;
-
-                // Show token
-                const tokenBox = document.getElementById('tokenBox');
-                tokenBox.style.display = 'block';
-                tokenBox.textContent = bearerToken;
-                document.getElementById('copyBtn').style.display = 'block';
-
-                // Enable QR
-                document.getElementById('qrBtn').disabled = false;
-                document.getElementById('qrAuthAlert').style.display = 'none';
-
+                onTokenReceived(data.data.access_token);
                 showAlert('loginAlert', `✅ Login successful! Token ready.`, 'success');
-                fetchLogs();
             } else {
                 showAlert('loginAlert', data.message || 'Login failed!', 'error');
             }

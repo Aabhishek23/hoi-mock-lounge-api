@@ -30,10 +30,23 @@ define('STORAGE_DIR', __DIR__ . '/storage');
 define('USERS_FILE', STORAGE_DIR . '/users.json');
 define('ENQUIRIES_FILE', STORAGE_DIR . '/enquiries.json');
 define('LOGS_FILE', STORAGE_DIR . '/logs.json');
+define('CLIENTS_FILE', STORAGE_DIR . '/clients.json');
 
 // ---- Initialize Storage ----
 if (!is_dir(STORAGE_DIR)) {
     @mkdir(STORAGE_DIR, 0775, true);
+}
+
+if (!file_exists(CLIENTS_FILE)) {
+    $defaultClients = [
+        'client_hoi_prod' => [
+            'client_id' => 'client_hoi_prod',
+            'client_secret' => 'secret_hoi_lounge_2024_key',
+            'client_name' => 'HOI B2B Partner Client Server',
+            'created_at' => date('Y-m-d H:i:s')
+        ]
+    ];
+    file_put_contents(CLIENTS_FILE, json_encode($defaultClients, JSON_PRETTY_PRINT));
 }
 
 if (!file_exists(USERS_FILE)) {
@@ -288,6 +301,90 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $path === 'auth/login') {
             'token_type' => 'Bearer',
             'expires_in' => TOKEN_EXPIRY_SECONDS,
             'user' => ['id' => $found['id'], 'name' => $found['name'], 'email' => $found['email']]
+        ]
+    ]);
+}
+
+// Handle: POST /oauth/token (OAuth 2.0 Client Credentials Flow)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($path === 'oauth/token' || $path === 'auth/token')) {
+    $body = getBody();
+    
+    $clientId = trim($body['client_id'] ?? '');
+    $clientSecret = trim($body['client_secret'] ?? '');
+    $grantType = trim($body['grant_type'] ?? 'client_credentials');
+
+    // Also support Basic Auth header
+    $headers = getallheaders();
+    foreach ($headers as $k => $v) {
+        if (strtolower($k) === 'authorization' && str_starts_with($v, 'Basic ')) {
+            $decoded = base64_decode(substr($v, 6));
+            $parts = explode(':', $decoded, 2);
+            if (count($parts) === 2) {
+                $clientId = $parts[0];
+                $clientSecret = $parts[1];
+            }
+        }
+    }
+
+    if (empty($clientId) || empty($clientSecret)) {
+        respond(400, [
+            'statusCode' => 400,
+            'error' => 'invalid_request',
+            'error_description' => 'client_id and client_secret are required'
+        ]);
+    }
+
+    $clients = readJSON(CLIENTS_FILE);
+    $foundClient = null;
+    foreach ($clients as $c) {
+        if ($c['client_id'] === $clientId && $c['client_secret'] === $clientSecret) {
+            $foundClient = $c;
+            break;
+        }
+    }
+
+    if (!$foundClient) {
+        respond(401, [
+            'statusCode' => 401,
+            'error' => 'invalid_client',
+            'error_description' => 'Invalid client_id or client_secret'
+        ]);
+    }
+
+    $token = generateToken($foundClient['client_id'], $foundClient['client_name']);
+
+    logRequest('OAUTH_TOKEN', [
+        'client_id' => $clientId,
+        'client_name' => $foundClient['client_name'],
+        'grant_type' => $grantType
+    ]);
+
+    respond(200, [
+        'statusCode' => 200,
+        'success' => true,
+        'access_token' => $token,
+        'token_type' => 'Bearer',
+        'expires_in' => TOKEN_EXPIRY_SECONDS,
+        'scope' => 'lounge_read_write',
+        'client_id' => $clientId
+    ]);
+}
+
+// Handle: POST /auth/refresh (Proactive Token Refresh)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $path === 'auth/refresh') {
+    $tokenPayload = validateToken();
+    $newToken = generateToken($tokenPayload['sub'], $tokenPayload['email']);
+
+    logRequest('TOKEN_REFRESH', ['sub' => $tokenPayload['sub']]);
+
+    respond(200, [
+        'statusCode' => 200,
+        'success' => true,
+        'message' => 'Token refreshed successfully',
+        'data' => [
+            'access_token' => $newToken,
+            'token_type' => 'Bearer',
+            'expires_in' => TOKEN_EXPIRY_SECONDS
         ]
     ]);
 }
