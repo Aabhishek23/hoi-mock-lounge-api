@@ -31,7 +31,11 @@ define('USERS_FILE', STORAGE_DIR . '/users.json');
 define('ENQUIRIES_FILE', STORAGE_DIR . '/enquiries.json');
 define('LOGS_FILE', STORAGE_DIR . '/logs.json');
 
-// ---- Initialize Storage Files if not exist ----
+// ---- Initialize Storage ----
+if (!is_dir(STORAGE_DIR)) {
+    @mkdir(STORAGE_DIR, 0775, true);
+}
+
 if (!file_exists(USERS_FILE)) {
     // Pre-seed a default test user
     $defaultUsers = [
