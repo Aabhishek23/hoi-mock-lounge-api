@@ -2,11 +2,10 @@
 Options -Indexes
 
 RewriteEngine On
-RewriteBase /mock_lounge_server/
 
 # Allow direct access to existing files (dashboard.php, test files etc)
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
 
 # Route all API calls (non-file) to index.php
-RewriteRule ^(.*)$ index.php/$1 [QSA,L]
+RewriteRule ^(.*)$ index.php [QSA,L]

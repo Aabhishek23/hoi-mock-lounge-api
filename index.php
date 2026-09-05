@@ -183,23 +183,20 @@ function logRequest($action, $data) {
 }
 
 // ---- Router ----
-// Support both PATH_INFO routing and direct REQUEST_URI routing
 $requestUri = $_SERVER['REQUEST_URI'] ?? '/';
-$pathInfo = $_SERVER['PATH_INFO'] ?? '';
+$uriPath = parse_url($requestUri, PHP_URL_PATH);
 
-// Use PATH_INFO if available (set by RewriteRule ^(.*)$ index.php/$1)
-if (!empty($pathInfo)) {
-    $path = trim($pathInfo, '/');
-} else {
-    // Strip query string
-    $uriPath = parse_url($requestUri, PHP_URL_PATH);
-    // Strip subfolder prefix (e.g. /mock_lounge_server/)
-    $scriptDir = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/');
-    if ($scriptDir && strpos($uriPath, $scriptDir) === 0) {
-        $uriPath = substr($uriPath, strlen($scriptDir));
-    }
-    $path = trim($uriPath, '/');
+// Strip subfolder prefix (e.g. /mock_lounge_server/) if present
+$scriptDir = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/');
+if (!empty($scriptDir) && strpos($uriPath, $scriptDir) === 0) {
+    $uriPath = substr($uriPath, strlen($scriptDir));
 }
+// Strip /index.php prefix if present
+if (strpos($uriPath, '/index.php') === 0) {
+    $uriPath = substr($uriPath, 10);
+}
+$path = trim($uriPath, '/');
+
 
 
 // Handle: POST /auth/register
