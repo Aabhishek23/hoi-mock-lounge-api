@@ -595,8 +595,20 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
                 <button class="refresh-btn" onclick="fetchLogs()">↻ Refresh</button>
             </div>
             <div class="log-list" id="logList">
-                <div class="empty-state">No activity yet. Login aur QR generate karein!</div>
-            </div>
+        </div>
+    </div>
+
+    <!-- ─── Full Width Card: SSE Live Events Monitor ─── -->
+    <div class="card" style="margin-top: 1.5rem;">
+        <div class="card-title" style="justify-content: space-between;">
+            <span>📡 Real-time Lounge Visit SSE Live Stream</span>
+            <span id="sseStatusBadge" style="font-size:0.75rem; padding:4px 10px; border-radius:12px; background:rgba(16,185,129,0.15); color:#10B981; font-weight:700;">🟢 Live Connecting...</span>
+        </div>
+        <div style="font-size:0.8rem; color:var(--muted); margin-bottom:10px;">
+            Render API Event Stream (<code>/lounge-visits/events</code>). Real-time scan & validation events from ESP32 / Postman will stream live below.
+        </div>
+        <div class="log-list" id="sseLogBox" style="height: 180px; font-family:'JetBrains Mono', monospace; font-size:0.78rem; background:#040509; border:1px solid rgba(255,255,255,0.08); padding:10px; overflow-y:auto;">
+            <div style="color:var(--muted);">[<?= date('H:i:s') ?>] SSE Live Stream — initializing connection to /lounge-visits/events...</div>
         </div>
     </div>
 
@@ -969,6 +981,92 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
 
     // Load logs on start
     fetchLogs();
+
+    // ─── SSE Real-time Live Stream ───
+    let sseSource = null;
+    let sseLastId = 0;
+
+    function connectLoungeSSE() {
+        if (sseSource) {
+            sseSource.close();
+            sseSource = null;
+        }
+
+        const badge = document.getElementById('sseStatusBadge');
+        const logBox = document.getElementById('sseLogBox');
+
+        try {
+            sseSource = new EventSource(`${BASE}/lounge-visits/events?last_id=${sseLastId}`);
+        } catch(e) {
+            if (badge) badge.innerText = '⚠ Connection Error';
+            return;
+        }
+
+        sseSource.addEventListener('connected', (e) => {
+            if (badge) {
+                badge.innerText = '🟢 Live Stream Connected';
+                badge.style.color = '#10B981';
+                badge.style.background = 'rgba(16,185,129,0.15)';
+            }
+        });
+
+        sseSource.addEventListener('enquiry_scanned', (e) => {
+            try {
+                const parsed = JSON.parse(e.data);
+                const d = parsed.data || {};
+                const isAllowed = d.result === 'ALLOWED';
+                const color = isAllowed ? '#10B981' : '#EF4444';
+                const icon = isAllowed ? '✅' : '❌';
+
+                const div = document.createElement('div');
+                div.style.color = color;
+                div.style.marginBottom = '4px';
+                div.innerText = `[${new Date().toLocaleTimeString()}] ${icon} SSE EVENT — Enquiry ID [${d.enquiry_id}]: ${d.result} (Status: ${d.status || 'N/A'}) ${d.used_count ? '(Uses: ' + d.used_count + '/' + d.max_usage + ')' : ''}`;
+
+                if (logBox) {
+                    logBox.appendChild(div);
+                    logBox.scrollTop = logBox.scrollHeight;
+                }
+                if (parsed.id) sseLastId = parsed.id;
+            } catch(err) {}
+        });
+
+        sseSource.addEventListener('enquiry_created', (e) => {
+            try {
+                const parsed = JSON.parse(e.data);
+                const d = parsed.data || {};
+                const div = document.createElement('div');
+                div.style.color = '#3B82F6';
+                div.style.marginBottom = '4px';
+                div.innerText = `[${new Date().toLocaleTimeString()}] 📱 NEW QR GENERATED — Enquiry ID [${d.enquiry_id}] for ${d.passenger_name} (Max Uses: ${d.max_usage})`;
+
+                if (logBox) {
+                    logBox.appendChild(div);
+                    logBox.scrollTop = logBox.scrollHeight;
+                }
+                if (parsed.id) sseLastId = parsed.id;
+            } catch(err) {}
+        });
+
+        sseSource.addEventListener('reconnect', (e) => {
+            try {
+                const d = JSON.parse(e.data);
+                if (d.last_id) sseLastId = d.last_id;
+            } catch(err) {}
+            sseSource.close();
+            setTimeout(connectLoungeSSE, 300);
+        });
+
+        sseSource.onerror = () => {
+            if (badge) {
+                badge.innerText = '⚠ Reconnecting...';
+                badge.style.color = '#F59E0B';
+                badge.style.background = 'rgba(245,158,11,0.15)';
+            }
+        };
+    }
+
+    connectLoungeSSE();
 </script>
 </body>
 </html>
