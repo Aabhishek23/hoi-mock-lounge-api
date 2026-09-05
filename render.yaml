@@ -1,0 +1,11 @@
+# HOI Mock Client API Server - Render.com Deployment Config
+# This file tells Render how to run this PHP app.
+# No build command needed, just serve via Apache/PHP.
+
+services:
+  - type: web
+    name: hoi-mock-lounge-api
+    env: php
+    buildCommand: ""
+    startCommand: php -S 0.0.0.0:$PORT -t .
+    plan: free
