@@ -1,13 +1,12 @@
-# HOI Mock Client API Server
-# Apache .htaccess - Routes all requests to index.php
+# HOI Mock Client API Server - Apache .htaccess
 Options -Indexes
 
 RewriteEngine On
-RewriteBase /
+RewriteBase /mock_lounge_server/
 
-# Allow direct access to files that exist
+# Allow direct access to existing files (dashboard.php, test files etc)
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
 
-# Route everything else to index.php
-RewriteRule ^(.*)$ index.php [QSA,L]
+# Route all API calls (non-file) to index.php
+RewriteRule ^(.*)$ index.php/$1 [QSA,L]
