@@ -1,3 +1,9 @@
+<?php
+// Dynamically detect the base URL for both localhost subdir and Render/cloud root
+$scriptDir = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/');
+$baseUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http')
+         . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -539,7 +545,7 @@
 </div>
 
 <script>
-    const BASE = window.location.origin;
+    const BASE = '<?php echo rtrim($baseUrl, '/'); ?>';
     let bearerToken = '';
 
     // ─── Tab Switch ───
