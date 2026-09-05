@@ -1,8 +1,10 @@
 <?php
 // Dynamically detect the base URL for both localhost subdir and Render/cloud root
 $scriptDir = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/');
-$baseUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http')
-         . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
+$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+$scheme = $isHttps ? 'https' : 'http';
+$baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -545,7 +547,8 @@ $baseUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 
 </div>
 
 <script>
-    const BASE = '<?php echo rtrim($baseUrl, '/'); ?>';
+    const SCRIPT_DIR = '<?php echo $scriptDir; ?>';
+    const BASE = window.location.origin + SCRIPT_DIR;
     let bearerToken = '';
 
     // ─── Tab Switch ───
