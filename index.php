@@ -33,7 +33,17 @@ define('LOGS_FILE', STORAGE_DIR . '/logs.json');
 
 // ---- Initialize Storage Files if not exist ----
 if (!file_exists(USERS_FILE)) {
-    file_put_contents(USERS_FILE, json_encode([]));
+    // Pre-seed a default test user
+    $defaultUsers = [
+        'usr_default' => [
+            'id' => 'usr_default',
+            'name' => 'Test User',
+            'email' => 'test@hoi.in',
+            'password_hash' => md5('test123'),
+            'created_at' => date('Y-m-d H:i:s')
+        ]
+    ];
+    file_put_contents(USERS_FILE, json_encode($defaultUsers));
 }
 if (!file_exists(ENQUIRIES_FILE)) {
     // Seed with a default enquiry
@@ -337,21 +347,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^lounge-visits/enquiri
 }
 
 // Handle: GET /logs (Fetch activity logs)
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && str_ends_with($path, 'logs')) {
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && (str_ends_with($path, 'logs') || $path === 'logs')) {
     $logs = readJSON(LOGS_FILE);
     respond(200, ['success' => true, 'logs' => $logs]);
 }
 
-// Handle: GET / (Redirect to Dashboard UI)
+// Handle: GET / -> Redirect to Dashboard for Browser requests
+$acceptHeader = $_SERVER['HTTP_ACCEPT'] ?? '';
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && str_contains($acceptHeader, 'text/html') && (
+    $path === '' || $path === 'index.php'
+)) {
+    header('Location: /dashboard.php');
+    exit;
+}
+
+// Handle: GET / (API Info for non-browser requests)
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && (
-    $path === '' ||
-    $path === 'index.php' ||
+    $path === '' || $path === 'index.php' ||
     str_ends_with($path, 'mock_lounge_server') ||
     str_ends_with($path, 'mock_lounge_server/index.php')
 )) {
-    // Redirect to Beautiful Dashboard UI
-    header('Location: /dashboard.php');
-    exit;
+    $logs = readJSON(LOGS_FILE);
+    respond(200, [
+        'name' => 'HOI Mock Client API Server',
+        'version' => '1.0.0',
+        'status' => 'RUNNING',
+        'dashboard' => '/dashboard.php',
+        'default_login' => ['email' => 'test@hoi.in', 'password' => 'test123'],
+        'endpoints' => [
+            'POST /auth/register' => 'Register new user',
+            'POST /auth/login' => 'Login and get Bearer JWT Token',
+            'POST /qr/generate' => 'Generate new QR Enquiry (requires token)',
+            'POST /lounge-visits/enquiries/{id}' => 'Validate token & complete lounge visit'
+        ],
+        'server_time' => date('Y-m-d H:i:s')
+    ]);
 }
 
 // 404 Fallback
