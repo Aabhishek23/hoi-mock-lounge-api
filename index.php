@@ -69,9 +69,19 @@ function readJSON($file) {
     return json_decode(file_get_contents($file), true) ?? [];
 }
 
+function generateEnquiryId() {
+    $chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    $id = '';
+    for ($i = 0; $i < 8; $i++) {
+        $id .= $chars[random_int(0, strlen($chars) - 1)];
+    }
+    return $id;
+}
+
 function writeJSON($file, $data) {
     file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT));
 }
+
 
 function respond($code, $data) {
     http_response_code($code);
@@ -290,7 +300,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $path === 'qr/generate') {
     $loungeName = trim($body['lounge_name'] ?? 'Plaza Premium Lounge T3');
     $airport = trim($body['airport'] ?? 'DEL - Indira Gandhi International Airport');
 
-    $enquiryId = (string)rand(10000, 99999);
+    $enquiryId = generateEnquiryId();
     $enquiries = readJSON(ENQUIRIES_FILE);
 
     $enquiries[$enquiryId] = [
