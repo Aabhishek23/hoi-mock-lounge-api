@@ -420,6 +420,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $path === 'qr/generate') {
     $expiresAtTime = time() + $validitySeconds;
     $expiresAtStr = date('Y-m-d H:i:s', $expiresAtTime);
 
+    // Custom QR Usage Limit (max_usage / usage_limit, default 1 time)
+    $maxUsage = intval($body['max_usage'] ?? ($body['usage_limit'] ?? 1));
+    if ($maxUsage <= 0) $maxUsage = 1;
+
     $enquiryId = generateEnquiryId();
     $enquiries = readJSON(ENQUIRIES_FILE);
 
@@ -433,13 +437,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $path === 'qr/generate') {
         'created_by' => $tokenPayload['sub'],
         'created_at' => date('Y-m-d H:i:s'),
         'expires_at' => $expiresAtStr,
-        'validity_seconds' => $validitySeconds
+        'validity_seconds' => $validitySeconds,
+        'max_usage' => $maxUsage,
+        'used_count' => 0
     ];
 
     $enquiries[$enquiryId] = $enquiryData;
     writeJSON(ENQUIRIES_FILE, $enquiries);
 
-    logRequest('QR_GENERATE', ['enquiry_id' => $enquiryId, 'passenger' => $passengerName, 'expires_at' => $expiresAtStr]);
+    logRequest('QR_GENERATE', ['enquiry_id' => $enquiryId, 'passenger' => $passengerName, 'max_usage' => $maxUsage]);
 
     respond(201, [
         'statusCode' => 201,
@@ -494,21 +500,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^lounge-visits/enquiri
         }
     }
 
-    $enquiries[$enquiryId]['status'] = $newStatus;
+    $maxUsage = intval($enquiries[$enquiryId]['max_usage'] ?? 1);
+    $usedCount = intval($enquiries[$enquiryId]['used_count'] ?? 0);
+
+    // Check if QR usage limit reached!
+    if ($usedCount >= $maxUsage) {
+        $enquiries[$enquiryId]['status'] = 'EXHAUSTED';
+        writeJSON(ENQUIRIES_FILE, $enquiries);
+
+        logRequest('QR_LIMIT_REACHED_ATTEMPT', [
+            'enquiry_id' => $enquiryId,
+            'max_usage' => $maxUsage,
+            'used_count' => $usedCount
+        ]);
+
+        respond(409, [
+            'statusCode' => 409,
+            'success' => false,
+            'message' => "❌ QR Usage Limit Exceeded! This QR was allowed $maxUsage time(s) and has already been used $usedCount time(s).",
+            'error' => 'qr_usage_limit_exceeded',
+            'data' => $enquiries[$enquiryId]
+        ]);
+    }
+
+    // Increment usage count
+    $usedCount++;
+    $enquiries[$enquiryId]['used_count'] = $usedCount;
+    $remainingUses = max(0, $maxUsage - $usedCount);
+    $enquiries[$enquiryId]['remaining_uses'] = $remainingUses;
+
+    // Update status to COMPLETED if fully used, or PARTIALLY_USED
+    $enquiries[$enquiryId]['status'] = ($usedCount >= $maxUsage) ? 'COMPLETED' : 'PARTIALLY_USED';
     $enquiries[$enquiryId]['completed_at'] = date('Y-m-d H:i:s');
     $enquiries[$enquiryId]['processed_by'] = $tokenPayload['sub'];
     writeJSON(ENQUIRIES_FILE, $enquiries);
 
     logRequest('VALIDATE_TOKEN', [
         'enquiry_id' => $enquiryId,
-        'status' => $newStatus,
+        'status' => $enquiries[$enquiryId]['status'],
+        'used_count' => $usedCount,
+        'max_usage' => $maxUsage,
         'user' => $tokenPayload['email'] ?? $tokenPayload['sub']
     ]);
 
     respond(200, [
         'statusCode' => 200,
         'success' => true,
-        'message' => 'Lounge visit enquiry processed and validated successfully!',
+        'message' => ($usedCount >= $maxUsage) 
+            ? "Lounge visit processed & completed successfully! (Used $usedCount / $maxUsage times)"
+            : "Lounge visit validated! ($remainingUses use(s) remaining out of $maxUsage)",
         'data' => $enquiries[$enquiryId]
     ]);
 }

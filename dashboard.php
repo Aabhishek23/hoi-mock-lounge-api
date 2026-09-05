@@ -524,6 +524,16 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
                     <option value="2592000">30 Days</option>
                 </select>
             </div>
+            <div class="form-group">
+                <label>🔢 Usage Limit (Kitni Baar Use Hoga)</label>
+                <select id="qrUsageSelect" style="width:100%; padding:10px; border-radius:8px; background:rgba(15,23,42,0.8); color:var(--text); border:1px solid var(--border);">
+                    <option value="1" selected>1 Time (One-Time Use - Default)</option>
+                    <option value="2">2 Times (Two Pax Entry)</option>
+                    <option value="3">3 Times</option>
+                    <option value="5">5 Times</option>
+                    <option value="10">10 Times</option>
+                </select>
+            </div>
             <button class="btn btn-green" id="qrBtn" onclick="generateQR()" disabled>Generate QR Code</button>
 
             <div class="qr-display" id="qrDisplay" style="display:none;">
@@ -533,7 +543,8 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
 
             <div class="enquiry-id-display" id="enquiryIdBox">
                 Enquiry ID: <strong id="enquiryIdVal">—</strong>
-                <div style="font-size:0.75rem; color:var(--gold); margin-top:4px;" id="qrExpiryTimeVal">Expires At: —</div>
+                <div style="font-size:0.75rem; color:var(--green); margin-top:4px;" id="qrUsageVal">Allowed Uses: 1 Time(s)</div>
+                <div style="font-size:0.75rem; color:var(--gold); margin-top:2px;" id="qrExpiryTimeVal">Expires At: —</div>
             </div>
         </div>
 
@@ -810,6 +821,7 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
         const lounge = document.getElementById('qrLounge').value.trim();
         const airport = document.getElementById('qrAirport').value.trim();
         const validitySecs = parseInt(document.getElementById('qrExpirySelect').value || '3600');
+        const maxUsage = parseInt(document.getElementById('qrUsageSelect').value || '1');
 
         const qrBtn = document.getElementById('qrBtn');
         qrBtn.disabled = true;
@@ -826,7 +838,8 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
                     passenger_name: passenger,
                     lounge_name: lounge,
                     airport,
-                    validity_seconds: validitySecs
+                    validity_seconds: validitySecs,
+                    max_usage: maxUsage
                 })
             });
             const data = await res.json();
@@ -845,6 +858,7 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
                 document.getElementById('qrLabel').textContent = passenger + ' | ' + lounge;
                 document.getElementById('enquiryIdBox').style.display = 'block';
                 document.getElementById('enquiryIdVal').textContent = enquiryId;
+                document.getElementById('qrUsageVal').textContent = `Allowed Uses: ${data.data.max_usage || 1} Time(s) (Used: ${data.data.used_count || 0})`;
                 document.getElementById('qrExpiryTimeVal').textContent = 'Expires At: ' + (data.data.expires_at || '—');
 
                 // Auto-populate Tester input
