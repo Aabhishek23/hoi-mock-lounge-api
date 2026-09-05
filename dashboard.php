@@ -513,6 +513,17 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
                 <label>Airport</label>
                 <input type="text" id="qrAirport" placeholder="DEL - IGI Airport" value="DEL - Indira Gandhi Int. Airport">
             </div>
+            <div class="form-group">
+                <label>⏰ QR Token Expiry Time</label>
+                <select id="qrExpirySelect" style="width:100%; padding:10px; border-radius:8px; background:rgba(15,23,42,0.8); color:var(--text); border:1px solid var(--border);">
+                    <option value="3600" selected>1 Hour (Default)</option>
+                    <option value="10">10 Seconds (Instant Expiry Test)</option>
+                    <option value="60">1 Minute</option>
+                    <option value="300">5 Minutes</option>
+                    <option value="86400">24 Hours</option>
+                    <option value="2592000">30 Days</option>
+                </select>
+            </div>
             <button class="btn btn-green" id="qrBtn" onclick="generateQR()" disabled>Generate QR Code</button>
 
             <div class="qr-display" id="qrDisplay" style="display:none;">
@@ -522,10 +533,37 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
 
             <div class="enquiry-id-display" id="enquiryIdBox">
                 Enquiry ID: <strong id="enquiryIdVal">—</strong>
+                <div style="font-size:0.75rem; color:var(--gold); margin-top:4px;" id="qrExpiryTimeVal">Expires At: —</div>
             </div>
         </div>
 
-        <!-- ─── Column 3: Logs ─── -->
+        <!-- ─── Column 3: Error & Validation Tester ─── -->
+        <div class="card">
+            <div class="card-title">🧪 Token & Error Tester</div>
+            <div class="form-group">
+                <label>Enquiry ID / QR Value</label>
+                <input type="text" id="testEnquiryId" placeholder="e.g. Z5NUFKDY">
+            </div>
+            <div class="form-group">
+                <label>Bearer Token to Test</label>
+                <select id="testTokenType" onchange="toggleCustomTokenInput()" style="width:100%; padding:8px; border-radius:8px; background:rgba(15,23,42,0.8); color:var(--text); border:1px solid var(--border); margin-bottom:6px;">
+                    <option value="valid">✅ Use Valid Current Token</option>
+                    <option value="invalid">❌ Use Galat / Tampered Token</option>
+                    <option value="expired">⏰ Use Expired Token</option>
+                    <option value="missing">🚫 Use Missing Token (No Header)</option>
+                    <option value="custom">✏️ Enter Custom Token</option>
+                </select>
+                <input type="text" id="customTestToken" placeholder="Paste custom token here..." style="display:none;">
+            </div>
+            
+            <div style="display:flex; flex-direction:column; gap:8px;">
+                <button class="btn btn-blue" onclick="testValidateVisit()">Validate Visit (POST)</button>
+            </div>
+
+            <div id="testResultBox" style="display:none; margin-top:12px; padding:12px; border-radius:8px; font-size:0.8rem; font-family:'JetBrains Mono', monospace; white-space:pre-wrap; word-break:break-all;"></div>
+        </div>
+
+        <!-- ─── Column 4: Logs ─── -->
         <div class="card">
             <div class="card-title" style="justify-content: space-between;">
                 📋 Activity Logs
@@ -759,6 +797,11 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
         });
     }
 
+    function toggleCustomTokenInput() {
+        const type = document.getElementById('testTokenType').value;
+        document.getElementById('customTestToken').style.display = type === 'custom' ? 'block' : 'none';
+    }
+
     // ─── Generate QR ───
     async function generateQR() {
         if (!bearerToken) return;
@@ -766,6 +809,7 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
         const passenger = document.getElementById('qrPassenger').value.trim();
         const lounge = document.getElementById('qrLounge').value.trim();
         const airport = document.getElementById('qrAirport').value.trim();
+        const validitySecs = parseInt(document.getElementById('qrExpirySelect').value || '3600');
 
         const qrBtn = document.getElementById('qrBtn');
         qrBtn.disabled = true;
@@ -778,7 +822,12 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${bearerToken}`
                 },
-                body: JSON.stringify({ passenger_name: passenger, lounge_name: lounge, airport })
+                body: JSON.stringify({
+                    passenger_name: passenger,
+                    lounge_name: lounge,
+                    airport,
+                    validity_seconds: validitySecs
+                })
             });
             const data = await res.json();
 
@@ -796,6 +845,10 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
                 document.getElementById('qrLabel').textContent = passenger + ' | ' + lounge;
                 document.getElementById('enquiryIdBox').style.display = 'block';
                 document.getElementById('enquiryIdVal').textContent = enquiryId;
+                document.getElementById('qrExpiryTimeVal').textContent = 'Expires At: ' + (data.data.expires_at || '—');
+
+                // Auto-populate Tester input
+                document.getElementById('testEnquiryId').value = enquiryId;
 
                 fetchLogs();
             } else {
@@ -806,6 +859,61 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
         } finally {
             qrBtn.disabled = false;
             qrBtn.innerHTML = 'Generate QR Code';
+        }
+    }
+
+    // ─── Error & Validation Tester ───
+    async function testValidateVisit() {
+        const enquiryId = document.getElementById('testEnquiryId').value.trim();
+        if (!enquiryId) return alert('Enquiry ID daalen!');
+
+        const tokenType = document.getElementById('testTokenType').value;
+        let headers = { 'Content-Type': 'application/json' };
+
+        if (tokenType === 'valid') {
+            if (!bearerToken) return alert('Pehle Login karke Valid Token lein!');
+            headers['Authorization'] = `Bearer ${bearerToken}`;
+        } else if (tokenType === 'invalid') {
+            headers['Authorization'] = 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.GALAT_INVALID_TAMPERED_TOKEN_SIGNATURE';
+        } else if (tokenType === 'expired') {
+            headers['Authorization'] = 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c3JfZGVmYXVsdCIsImVtYWlsIjoidGVzdEBob2kuaW4iLCJpYXQiOjE1MDAwMDAwMDAsImV4cCI6MTUwMDAwMDAwMH0=.SIG';
+        } else if (tokenType === 'custom') {
+            const customToken = document.getElementById('customTestToken').value.trim();
+            if (!customToken) return alert('Custom Token input field me token daalen!');
+            headers['Authorization'] = customToken.startsWith('Bearer ') ? customToken : `Bearer ${customToken}`;
+        }
+
+        const box = document.getElementById('testResultBox');
+        box.style.display = 'block';
+        box.style.background = '#0f172a';
+        box.style.border = '1px solid var(--border)';
+        box.style.color = '#e2e8f0';
+        box.textContent = '⏳ Sending POST request to validate...';
+
+        try {
+            const res = await fetch(`${BASE}/lounge-visits/enquiries/${enquiryId}`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ status: 'COMPLETED' })
+            });
+            const data = await res.json();
+            
+            if (res.status === 200) {
+                box.style.background = 'rgba(16, 185, 129, 0.15)';
+                box.style.border = '1px solid #10b981';
+                box.style.color = '#34d399';
+            } else {
+                box.style.background = 'rgba(239, 68, 68, 0.15)';
+                box.style.border = '1px solid #ef4444';
+                box.style.color = '#fca5a5';
+            }
+
+            box.textContent = `HTTP Code: ${res.status} (${res.statusText || ''})\nResponse:\n` + JSON.stringify(data, null, 2);
+            fetchLogs();
+        } catch (e) {
+            box.style.background = 'rgba(239, 68, 68, 0.15)';
+            box.style.color = '#fca5a5';
+            box.textContent = '❌ Network Error: ' + e.message;
         }
     }
 

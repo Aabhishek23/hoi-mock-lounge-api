@@ -138,27 +138,41 @@ function validateToken() {
     if (empty($authHeader)) {
         respond(401, [
             'statusCode' => 401,
-            'message' => 'Authorization header missing',
-            'error' => 'Unauthorized'
+            'success' => false,
+            'message' => '❌ Authorization Header Missing: Please provide Bearer Token!',
+            'error' => 'unauthorized_missing_token'
         ]);
     }
 
     if (!str_starts_with($authHeader, 'Bearer ')) {
         respond(401, [
             'statusCode' => 401,
-            'message' => 'User not authorized: jwt malformed',
-            'error' => 'Unauthorized'
+            'success' => false,
+            'message' => '❌ Invalid Token Format: Header must start with Bearer',
+            'error' => 'unauthorized_invalid_format'
         ]);
     }
 
-    $token = substr($authHeader, 7);
+    $token = trim(substr($authHeader, 7));
     $parts = explode('.', $token);
 
     if (count($parts) !== 3) {
         respond(401, [
             'statusCode' => 401,
-            'message' => 'User not authorized: jwt malformed',
-            'error' => 'Unauthorized'
+            'success' => false,
+            'message' => '❌ Galat Token: Invalid JWT Structure (Malformed Token)',
+            'error' => 'unauthorized_malformed_token'
+        ]);
+    }
+
+    // Verify Signature
+    $expectedSig = base64_encode(hash_hmac('sha256', "{$parts[0]}.{$parts[1]}", JWT_SECRET, true));
+    if (!hash_equals($expectedSig, $parts[2])) {
+        respond(401, [
+            'statusCode' => 401,
+            'success' => false,
+            'message' => '❌ Galat Token: Signature Verification Failed (Invalid / Tampered Token)!',
+            'error' => 'unauthorized_invalid_signature'
         ]);
     }
 
@@ -167,16 +181,19 @@ function validateToken() {
     if (!$payload) {
         respond(401, [
             'statusCode' => 401,
-            'message' => 'User not authorized: jwt malformed',
-            'error' => 'Unauthorized'
+            'success' => false,
+            'message' => '❌ Galat Token: Payload Decoding Failed',
+            'error' => 'unauthorized_invalid_payload'
         ]);
     }
 
-    if ($payload['exp'] < time()) {
+    if (isset($payload['exp']) && $payload['exp'] < time()) {
         respond(401, [
             'statusCode' => 401,
-            'message' => 'User not authorized: jwt expired',
-            'error' => 'Unauthorized'
+            'success' => false,
+            'message' => '❌ Token Expired: Access token has expired. Please login again or refresh token!',
+            'error' => 'unauthorized_jwt_expired',
+            'expired_at' => date('Y-m-d H:i:s', $payload['exp'])
         ]);
     }
 
@@ -398,35 +415,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $path === 'qr/generate') {
     $loungeName = trim($body['lounge_name'] ?? 'Plaza Premium Lounge T3');
     $airport = trim($body['airport'] ?? 'DEL - Indira Gandhi International Airport');
 
+    // Custom QR Expiry support (validity_seconds or validity_minutes, default 3600 seconds = 1 hour)
+    $validitySeconds = intval($body['validity_seconds'] ?? (isset($body['validity_minutes']) ? intval($body['validity_minutes']) * 60 : 3600));
+    $expiresAtTime = time() + $validitySeconds;
+    $expiresAtStr = date('Y-m-d H:i:s', $expiresAtTime);
+
     $enquiryId = generateEnquiryId();
     $enquiries = readJSON(ENQUIRIES_FILE);
 
-    $enquiries[$enquiryId] = [
+    $enquiryData = [
         'enquiry_id' => $enquiryId,
+        'qr_value' => $enquiryId,
         'passenger_name' => $passengerName,
         'lounge_name' => $loungeName,
         'airport' => $airport,
         'status' => 'PENDING',
         'created_by' => $tokenPayload['sub'],
-        'created_at' => date('Y-m-d H:i:s')
+        'created_at' => date('Y-m-d H:i:s'),
+        'expires_at' => $expiresAtStr,
+        'validity_seconds' => $validitySeconds
     ];
+
+    $enquiries[$enquiryId] = $enquiryData;
     writeJSON(ENQUIRIES_FILE, $enquiries);
 
-    logRequest('QR_GENERATE', ['enquiry_id' => $enquiryId, 'passenger' => $passengerName]);
+    logRequest('QR_GENERATE', ['enquiry_id' => $enquiryId, 'passenger' => $passengerName, 'expires_at' => $expiresAtStr]);
 
     respond(201, [
         'statusCode' => 201,
         'success' => true,
         'message' => 'QR Code enquiry created successfully',
-        'data' => [
-            'enquiry_id' => $enquiryId,
-            'qr_value' => $enquiryId,
-            'passenger_name' => $passengerName,
-            'lounge_name' => $loungeName,
-            'airport' => $airport,
-            'status' => 'PENDING',
-            'created_at' => date('Y-m-d H:i:s')
-        ]
+        'data' => $enquiryData
     ]);
 }
 
@@ -450,6 +469,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^lounge-visits/enquiri
             'status' => 'PENDING',
             'created_at' => date('Y-m-d H:i:s')
         ];
+    }
+
+    // Check if Enquiry QR token is expired!
+    if (isset($enquiries[$enquiryId]['expires_at'])) {
+        $expiresAtTs = strtotime($enquiries[$enquiryId]['expires_at']);
+        if (time() > $expiresAtTs) {
+            $enquiries[$enquiryId]['status'] = 'EXPIRED';
+            writeJSON(ENQUIRIES_FILE, $enquiries);
+
+            logRequest('QR_EXPIRED_ATTEMPT', [
+                'enquiry_id' => $enquiryId,
+                'expired_at' => $enquiries[$enquiryId]['expires_at']
+            ]);
+
+            respond(410, [
+                'statusCode' => 410,
+                'success' => false,
+                'message' => '❌ QR Code / Enquiry Token EXPIRED! Please generate a new QR Code.',
+                'error' => 'qr_token_expired',
+                'data' => $enquiries[$enquiryId]
+            ]);
+        }
     }
 
     $enquiries[$enquiryId]['status'] = $newStatus;
