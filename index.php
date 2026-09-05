@@ -459,16 +459,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^lounge-visits/enquiri
 
     $enquiries = readJSON(ENQUIRIES_FILE);
 
-    // Auto-create enquiry if not exists
+    // Return 404 Not Found if Enquiry ID does not exist
     if (!isset($enquiries[$enquiryId])) {
-        $enquiries[$enquiryId] = [
-            'enquiry_id' => $enquiryId,
-            'passenger_name' => 'Auto-Created Passenger',
-            'lounge_name' => 'Airport Executive Lounge',
-            'airport' => 'Unknown Airport',
-            'status' => 'PENDING',
-            'created_at' => date('Y-m-d H:i:s')
-        ];
+        logRequest('INVALID_ENQUIRY_ATTEMPT', ['enquiry_id' => $enquiryId]);
+
+        respond(404, [
+            'statusCode' => 404,
+            'success' => false,
+            'message' => "❌ Galat Enquiry ID ($enquiryId): Invalid Enquiry ID or record not found!",
+            'error' => 'enquiry_not_found',
+            'enquiry_id' => $enquiryId
+        ]);
     }
 
     // Check if Enquiry QR token is expired!
