@@ -1,5 +1,7 @@
 <?php
-$base = 'http://localhost/mock_lounge_server';
+$base = 'https://hoi-mock-lounge-api.onrender.com';
+
+echo "Testing Invalid Enquiry ID 404 Response on Live Render...\n\n";
 
 // Login
 $ch = curl_init($base . '/auth/login');
@@ -10,7 +12,7 @@ curl_setopt_array($ch, [
     CURLOPT_POSTFIELDS => json_encode(['email' => 'test@hoi.in', 'password' => 'test123'])
 ]);
 $res = json_decode(curl_exec($ch), true);
-$token = $res['data']['access_token'];
+$token = $res['data']['access_token'] ?? '';
 
 // Test Invalid Enquiry ID
 $ch2 = curl_init($base . '/lounge-visits/enquiries/hkhzkhkh');
