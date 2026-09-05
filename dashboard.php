@@ -106,15 +106,21 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
 
         /* ─── Layout ─── */
         .wrapper {
-            max-width: 1100px;
+            max-width: 1400px;
             margin: 0 auto;
             padding: 32px 24px;
             display: grid;
             gap: 24px;
         }
 
-        .grid-3 { display: grid; grid-template-columns: 1fr 1.5fr 1fr; gap: 20px; }
-        @media (max-width: 900px) { .grid-3 { grid-template-columns: 1fr; } }
+        .grid-2x2 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+            gap: 24px;
+        }
+        @media (max-width: 980px) {
+            .grid-2x2 { grid-template-columns: 1fr; }
+        }
 
         /* ─── Card ─── */
         .card {
@@ -123,6 +129,9 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
             border-radius: 18px;
             padding: 24px;
             backdrop-filter: blur(12px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+            display: flex;
+            flex-direction: column;
         }
 
         .card-title {
@@ -183,12 +192,17 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
             width: 100%;
             background: rgba(0, 0, 0, 0.5);
             border: 1px solid var(--border);
-            border-radius: 9px;
-            padding: 10px 13px;
+            border-radius: 10px;
+            padding: 12px 14px;
             color: var(--text);
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.85rem;
-            transition: border 0.2s;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.92rem;
+            transition: all 0.2s;
+        }
+
+        select option {
+            background: #0f172a;
+            color: var(--text);
         }
 
         input:focus { outline: none; border-color: var(--purple); }
@@ -415,8 +429,8 @@ $baseUrl = $scheme . '://' . $_SERVER['HTTP_HOST'] . $scriptDir;
 
 <div class="wrapper">
 
-    <!-- ── Main 3 Column Grid ── -->
-    <div class="grid-3">
+    <!-- ── Main 2x2 Grid ── -->
+    <div class="grid-2x2">
 
         <!-- ─── Column 1: Auth ─── -->
         <div class="card">
