@@ -1,4 +1,7 @@
 <?php
+// Set Timezone to Indian Standard Time (IST)
+date_default_timezone_set('Asia/Kolkata');
+
 /**
  * ============================================================
  * HOI Mock Client API Server
