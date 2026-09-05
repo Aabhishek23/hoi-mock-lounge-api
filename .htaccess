@@ -1,11 +1,12 @@
 # HOI Mock Client API Server - Apache .htaccess
-Options -Indexes
+Options -Indexes +FollowSymLinks
 
 RewriteEngine On
 
-# Allow direct access to existing files (dashboard.php, test files etc)
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
+# Stop processing if file or directory exists
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
 
-# Route all API calls (non-file) to index.php
-RewriteRule ^(.*)$ index.php [QSA,L]
+# Route all other requests to index.php
+RewriteRule ^ index.php [L]
