@@ -34,15 +34,10 @@ define('USERS_FILE', STORAGE_DIR . '/users.json');
 define('ENQUIRIES_FILE', STORAGE_DIR . '/enquiries.json');
 define('LOGS_FILE', STORAGE_DIR . '/logs.json');
 define('CLIENTS_FILE', STORAGE_DIR . '/clients.json');
-define('EVENTS_FILE', STORAGE_DIR . '/events.json');
 
 // ---- Initialize Storage ----
 if (!is_dir(STORAGE_DIR)) {
     @mkdir(STORAGE_DIR, 0775, true);
-}
-
-if (!file_exists(EVENTS_FILE)) {
-    file_put_contents(EVENTS_FILE, json_encode([]));
 }
 
 if (!file_exists(CLIENTS_FILE)) {
@@ -105,27 +100,6 @@ function generateEnquiryId() {
 
 function writeJSON($file, $data) {
     file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT));
-}
-
-function pushSseEvent($eventType, $data) {
-    $events = readJSON(EVENTS_FILE);
-    $lastId = 0;
-    foreach ($events as $e) {
-        if (isset($e['id']) && (int)$e['id'] > $lastId) {
-            $lastId = (int) $e['id'];
-        }
-    }
-    $newEvent = [
-        'id' => $lastId + 1,
-        'timestamp' => date('Y-m-d H:i:s'),
-        'event' => $eventType,
-        'data' => $data
-    ];
-    $events[] = $newEvent;
-    if (count($events) > 100) {
-        $events = array_slice($events, -100);
-    }
-    writeJSON(EVENTS_FILE, $events);
 }
 
 
@@ -255,56 +229,6 @@ if (strpos($uriPath, '/index.php') === 0) {
     $uriPath = substr($uriPath, 10);
 }
 $path = trim($uriPath, '/');
-
-// Handle: GET /lounge-visits/events OR GET /events (SSE Real-time Live Event Stream)
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($path === 'lounge-visits/events' || $path === 'events')) {
-    header('Content-Type: text/event-stream; charset=utf-8');
-    header('Cache-Control: no-cache, no-store, must-revalidate');
-    header('Pragma: no-cache');
-    header('Access-Control-Allow-Origin: *');
-    header('X-Accel-Buffering: no');
-
-    while (ob_get_level() > 0) {
-        @ob_end_clean();
-    }
-    @ini_set('output_buffering', 'off');
-    @ini_set('implicit_flush', '1');
-    @ob_implicit_flush(true);
-
-    set_time_limit(30);
-    ignore_user_abort(true);
-
-    $lastId = intval($_GET['last_id'] ?? ($_SERVER['HTTP_LAST_EVENT_ID'] ?? 0));
-
-    echo ":" . str_repeat(" ", 2048) . "\n\n";
-    echo "retry: 1000\n";
-    echo "event: connected\n";
-    echo "data: {\"status\":\"ok\",\"server\":\"hoi-mock-lounge-api.onrender.com\",\"last_id\":{$lastId}}\n\n";
-    @flush();
-
-    $elapsed = 0;
-    $maxPoll = 25;
-
-    while ($elapsed < $maxPoll && !connection_aborted()) {
-        $events = readJSON(EVENTS_FILE);
-        foreach ($events as $ev) {
-            if (isset($ev['id']) && (int)$ev['id'] > $lastId) {
-                echo "id: {$ev['id']}\n";
-                echo "event: {$ev['event']}\n";
-                echo "data: " . json_encode($ev) . "\n\n";
-                @flush();
-                $lastId = (int) $ev['id'];
-            }
-        }
-        sleep(1);
-        $elapsed += 1;
-    }
-
-    echo "event: reconnect\n";
-    echo "data: {\"last_id\":{$lastId}}\n\n";
-    @flush();
-    exit;
-}
 
 
 
@@ -525,13 +449,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $path === 'qr/generate') {
     writeJSON(ENQUIRIES_FILE, $enquiries);
 
     logRequest('QR_GENERATE', ['enquiry_id' => $enquiryId, 'passenger' => $passengerName, 'max_usage' => $maxUsage]);
-    pushSseEvent('enquiry_created', [
-        'enquiry_id' => $enquiryId,
-        'passenger_name' => $passengerName,
-        'lounge_name' => $loungeName,
-        'max_usage' => $maxUsage,
-        'expires_at' => $expiresAtStr
-    ]);
 
     respond(201, [
         'statusCode' => 201,
@@ -554,12 +471,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^lounge-visits/enquiri
     // Return 404 Not Found if Enquiry ID does not exist
     if (!isset($enquiries[$enquiryId])) {
         logRequest('INVALID_ENQUIRY_ATTEMPT', ['enquiry_id' => $enquiryId]);
-        pushSseEvent('enquiry_scanned', [
-            'enquiry_id' => $enquiryId,
-            'result' => 'NOT_FOUND',
-            'status' => 'INVALID',
-            'message' => "Enquiry ID ($enquiryId) not found"
-        ]);
 
         respond(404, [
             'statusCode' => 404,
@@ -580,12 +491,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^lounge-visits/enquiri
             logRequest('QR_EXPIRED_ATTEMPT', [
                 'enquiry_id' => $enquiryId,
                 'expired_at' => $enquiries[$enquiryId]['expires_at']
-            ]);
-            pushSseEvent('enquiry_scanned', [
-                'enquiry_id' => $enquiryId,
-                'result' => 'EXPIRED',
-                'status' => 'EXPIRED',
-                'message' => 'QR Code / Enquiry Token EXPIRED!'
             ]);
 
             respond(410, [
@@ -610,13 +515,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^lounge-visits/enquiri
             'enquiry_id' => $enquiryId,
             'max_usage' => $maxUsage,
             'used_count' => $usedCount
-        ]);
-        pushSseEvent('enquiry_scanned', [
-            'enquiry_id' => $enquiryId,
-            'result' => 'EXHAUSTED',
-            'status' => 'LIMIT_EXCEEDED',
-            'used_count' => $usedCount,
-            'max_usage' => $maxUsage
         ]);
 
         respond(409, [
@@ -646,15 +544,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && preg_match('#^lounge-visits/enquiri
         'used_count' => $usedCount,
         'max_usage' => $maxUsage,
         'user' => $tokenPayload['email'] ?? $tokenPayload['sub']
-    ]);
-
-    pushSseEvent('enquiry_scanned', [
-        'enquiry_id' => $enquiryId,
-        'result' => 'ALLOWED',
-        'status' => $enquiries[$enquiryId]['status'],
-        'used_count' => $usedCount,
-        'max_usage' => $maxUsage,
-        'passenger_name' => $enquiries[$enquiryId]['passenger_name']
     ]);
 
     respond(200, [

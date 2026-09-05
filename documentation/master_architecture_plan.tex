@@ -1,0 +1,281 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{utf8}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{array}
+\usepackage{enumitem}
+
+% Colors
+\definecolor{primary}{RGB}{124, 58, 237}
+\definecolor{darkbg}{RGB}{15, 23, 42}
+\definecolor{codebg}{RGB}{241, 245, 249}
+\definecolor{codegreen}{RGB}{16, 185, 129}
+\definecolor{codered}{RGB}{239, 68, 68}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=primary,
+    filecolor=primary,      
+    urlcolor=primary,
+    pdftitle={HOI Multi-Provider Lounge Access System Architecture Master Plan},
+    pdfpagemode=FullScreen,
+}
+
+\lstset{
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    captionpos=b,
+    commentstyle=\color{gray},
+    keywordstyle=\color{primary}\bfseries,
+    stringstyle=\color{codegreen},
+    showstringspaces=false,
+    tabsize=2,
+    frame=single
+}
+
+\title{\textbf{\Large HOI Multi-Provider Lounge Access System}\\[0.5em] \Large System Architecture \& Integration Master Plan}
+\author{\textbf{Engineering \& Architecture Team}}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{Executive Summary}
+% ============================================================
+This document provides the complete, authoritative specification and implementation blueprint for the \textbf{HOI Multi-Provider Lounge Access Control System}.
+
+The system bridges IoT hardware scanners (\textbf{ESP32 Turnstile Controllers}) with multiple independent 3rd-party provider backends (e.g., HOI LoungePass, DreamFolks, Encalm) via a centralized, high-performance \textbf{Middleware Proxy Relay Server}.
+
+Key highlights of this architectural specification include:
+\begin{itemize}[noitemsep]
+    \item \textbf{Hardware-agnostic 3rd Party Routing}: Seamless integration of 8-character alphanumeric QR tokens without modifying scanner hardware code.
+    \item \textbf{Dual-Layer Security Model}: Hardware-level HMAC-SHA256 device authentication combined with Provider-level Bearer JWT Validation.
+    \item \textbf{Granular Access Control}: Built-in support for QR Expiry Limits, Usage Count Restrictions (Single-use vs Multi-use), and real-time audit logging.
+    \item \textbf{Zero-Downtime Provider Migration}: Database-driven device mapping that allows remote provider switching without re-flashing ESP32 firmware.
+\end{itemize}
+
+% ============================================================
+\section{High-Level System Architecture}
+% ============================================================
+
+The architecture consists of three decoupled operational tiers:
+
+\begin{enumerate}
+    \item \textbf{Tier 1: ESP32 Hardware Edge Scanners (Gate Controllers)}: Scans 8-character QR tokens at gate turnstiles and transmits cryptographically signed payloads to the Middleware Server.
+    \item \textbf{Tier 2: Main Middleware Relay Server (The Proxy Router)}: Verifies hardware integrity via HMAC, queries device-to-provider mappings from the relational database, and proxies HTTP requests to the target provider.
+    \item \textbf{Tier 3: 3rd Party Provider Servers (HOI / Partners)}: Validates QR tokens against business rules (Expiry, Max Usage, Registration Status) and returns approval or rejection codes.
+\end{enumerate}
+
+\begin{lstlisting}[caption={System Architecture Data Flow Diagram}]
+[ ESP32 Gate Scanner ]
+         |
+         |-- 1. Scans 8-char QR ("Z5NUFKDY")
+         |-- 2. Signs payload with HMAC-SHA256 (deviceId|timestamp|token)
+         |-- 3. POST request to Middleware Server (/api/esp32/scan)
+         v
+[ YOUR MAIN MIDDLEWARE SERVER ]  (The Proxy Router)
+         |
+         |-- 4. Authenticate ESP32 HMAC Signature (Hardware Auth)
+         |-- 5. Query DB `devices` table for `device_id`
+         |      Returns: Provider="HOI", Target_URL="https://hoi-api.com"
+         |-- 6. Forward / Relay QR Token to Provider API Endpoint:
+         |      POST https://hoi-api.com/lounge-visits/enquiries/Z5NUFKDY
+         |      Header: Authorization: Bearer <HOI_BEARER_TOKEN>
+         v
+[ HOI 3rd PARTY SERVER ]
+         |
+         |-- 7. Validates Bearer Token, Expiry & Max Usage Count
+         |-- 8. Updates status to "COMPLETED" & Returns HTTP Response
+         v
+[ YOUR MAIN MIDDLEWARE SERVER ]
+         |
+         |-- 9. Log transaction in DB `scan_logs`
+         |-- 10. Transmit final action to ESP32 (GATE_OPEN / GATE_DENIED)
+         v
+[ ESP32 Gate Scanner ]
+         |-- 11. Triggers Relay (Turnstile Opens! Green LED Bleeps!)
+\end{lstlisting}
+
+\newpage
+% ============================================================
+\section{Component Specifications}
+% ============================================================
+
+\subsection{Component A: ESP32 Hardware Edge Scanner}
+The ESP32 microcontroller is connected to an 8-character QR optical scanner module and a turnstile relay switch.
+
+\subsubsection{Request Payload Format}
+When a QR code is scanned, the ESP32 calculates an HMAC-SHA256 signature using its factory-provisioned \texttt{secretKey} and posts to the Middleware:
+
+\begin{lstlisting}[language=json, caption={ESP32 to Middleware Request Payload}]
+{
+    "deviceId": "ESP_DEL_T3_01",
+    "timestamp": 1788624000,
+    "scannedToken": "Z5NUFKDY",
+    "signature": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}
+\end{lstlisting}
+
+\subsubsection{Signature Formula}
+\[
+\text{Payload} = \text{deviceId} \parallel \text{"|"} \parallel \text{timestamp} \parallel \text{"|"} \parallel \text{scannedToken}
+\]
+\[
+\text{Signature} = \text{HMAC-SHA256}(\text{Payload}, \text{secretKey})
+\]
+
+\subsection{Component B: Main Middleware Server (Proxy Router)}
+The Middleware Server is responsible for zero-latency routing and auditing:
+\begin{enumerate}
+    \item \textbf{Hardware Integrity}: Re-computes the HMAC-SHA256 signature to guarantee the request originated from an authorized ESP32 hardware device.
+    \item \textbf{Device Lookup}: Queries the \texttt{devices} database table using the \texttt{deviceId} to retrieve the target Provider's API URL and pre-configured Bearer Token.
+    \item \textbf{HTTP Proxying}: Dispatches an asynchronous HTTP POST request to the Provider's endpoint.
+    \item \textbf{Gate Command Translation}: Converts Provider HTTP status codes into binary hardware commands (\texttt{GATE\_OPEN} vs \texttt{GATE\_DENIED}).
+\end{enumerate}
+
+\subsection{Component C: 3rd Party Provider Server (HOI Mock API)}
+The 3rd Party Provider validates the business logic:
+\begin{itemize}
+    \item \textbf{JWT Bearer Authorization}: Validates caller token.
+    \item \textbf{Record Existence}: Ensures the 8-character Enquiry ID exists in storage (Returns \texttt{HTTP 404 Not Found} if invalid).
+    \item \textbf{Token Expiry}: Checks \texttt{expires\_at} timestamp (Returns \texttt{HTTP 410 Gone} if expired).
+    \item \textbf{Usage Count Control}: Increments \texttt{used\_count} against \texttt{max\_usage} limit (Returns \texttt{HTTP 409 Conflict} if limit exceeded).
+\end{itemize}
+
+\newpage
+% ============================================================
+\section{Database Schema Design (DDL)}
+% ============================================================
+
+The system utilizes two primary relational database tables: \texttt{devices} (Configuration) and \texttt{scan\_logs} (Auditing).
+
+\subsection{Table 1: \texttt{devices} (Hardware-to-Provider Mapping)}
+
+\begin{lstlisting}[language=SQL, caption={DDL Statement for devices Table}]
+CREATE TABLE devices (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    device_id VARCHAR(50) NOT NULL UNIQUE,
+    device_name VARCHAR(100) NOT NULL,
+    location_name VARCHAR(150) NOT NULL,
+    provider_name VARCHAR(50) NOT NULL,
+    provider_api_url VARCHAR(255) NOT NULL,
+    provider_bearer_token TEXT NOT NULL,
+    secret_key VARCHAR(128) NOT NULL,
+    status ENUM('ACTIVE', 'INACTIVE') DEFAULT 'ACTIVE',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+\end{lstlisting}
+
+\subsection{Table 2: \texttt{scan\_logs} (Audit History \& Analytics)}
+
+\begin{lstlisting}[language=SQL, caption={DDL Statement for scan\_logs Table}]
+CREATE TABLE scan_logs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    device_id VARCHAR(50) NOT NULL,
+    scanned_token VARCHAR(20) NOT NULL,
+    provider_name VARCHAR(50) NOT NULL,
+    http_code INT NOT NULL,
+    gate_action ENUM('GATE_OPEN', 'GATE_DENIED') NOT NULL,
+    response_msg TEXT,
+    scanned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_device (device_id),
+    INDEX idx_scanned_at (scanned_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+\end{lstlisting}
+
+% ============================================================
+\section{Error Handling \& Gate Action Matrix}
+% ============================================================
+
+The following matrix specifies the exact behavior of the Middleware Server and ESP32 Edge Device for every possible HTTP response status from the 3rd-party provider:
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{|m{2.2cm}|m{2.5cm}|m{4.5cm}|m{3.5cm}|}
+\hline
+\textbf{Provider Status} & \textbf{Error Code} & \textbf{Middleware Action} & \textbf{ESP32 Hardware Action} \\ \hline
+\textbf{HTTP 200 OK} & \texttt{COMPLETED} & Logs success; Returns \texttt{GATE\_OPEN} & 🚪 Turnstile Opens + Green LED + Chime \\ \hline
+\textbf{HTTP 401} & \texttt{unauthorized} & Logs auth failure; Returns \texttt{GATE\_DENIED} & 🔴 Red LED + Display "Auth Error" \\ \hline
+\textbf{HTTP 404} & \texttt{enquiry\_not\_found} & Logs invalid ID attempt; Returns \texttt{GATE\_DENIED} & 🔴 Red LED + Display "Invalid QR ID" \\ \hline
+\textbf{HTTP 409} & \texttt{limit\_exceeded} & Logs limit exceeded; Returns \texttt{GATE\_DENIED} & 🔴 Red LED + Display "Already Used" \\ \hline
+\textbf{HTTP 410} & \texttt{qr\_token\_expired} & Logs QR expiry; Returns \texttt{GATE\_DENIED} & 🔴 Red LED + Display "QR Expired" \\ \hline
+\textbf{HTTP 500 / 504} & \texttt{server\_error} & Logs timeout; Returns \texttt{GATE\_DENIED} & 🔴 Red LED + Display "Network Timeout" \\ \hline
+\end{tabular}
+\caption{Complete Gate Action Matrix}
+\end{table}
+
+\newpage
+% ============================================================
+\section{API Specifications}
+% ============================================================
+
+\subsection{1. Obtain OAuth 2.0 Access Token}
+\begin{itemize}
+    \item \textbf{Method}: \texttt{POST}
+    \item \textbf{Endpoint}: \texttt{/oauth/token}
+    \item \textbf{Content-Type}: \texttt{application/json}
+\end{itemize}
+
+\begin{lstlisting}[language=json, caption={OAuth 2.0 Token Request & Response}]
+// Request Body
+{
+    "grant_type": "client_credentials",
+    "client_id": "client_hoi_prod",
+    "client_secret": "secret_hoi_lounge_2024_key"
+}
+
+// Response Body (HTTP 200 OK)
+{
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "token_type": "Bearer",
+    "expires_in": 2592000,
+    "scope": "lounge_read_write"
+}
+\end{lstlisting}
+
+\subsection{2. Validate Lounge Visit / Enquiry ID}
+\begin{itemize}
+    \item \textbf{Method}: \texttt{POST}
+    \item \textbf{Endpoint}: \texttt{/lounge-visits/enquiries/\{ENQUIRY\_ID\}}
+    \item \textbf{Header}: \texttt{Authorization: Bearer <ACCESS\_TOKEN>}
+\end{itemize}
+
+\begin{lstlisting}[language=json, caption={Lounge Visit Validation Response}]
+// Success Response (HTTP 200 OK)
+{
+    "statusCode": 200,
+    "success": true,
+    "message": "Lounge visit processed & completed successfully!",
+    "data": {
+        "enquiry_id": "Z5NUFKDY",
+        "passenger_name": "Rahul Sharma",
+        "status": "COMPLETED",
+        "max_usage": 1,
+        "used_count": 1,
+        "remaining_uses": 0,
+        "expires_at": "2026-10-05 23:59:59"
+    }
+}
+\end{lstlisting}
+
+% ============================================================
+\section{Security Audit \& Compliance Standards}
+% ============================================================
+\begin{enumerate}
+    \item \textbf{RFC 6749 Compliance}: Implements standard OAuth 2.0 Client Credentials Grant for B2B API integrations.
+    \item \textbf{FIPS 198-1 HMAC Compliance}: Uses SHA-256 keyed-hash algorithm to prevent hardware spoofing and replay attacks.
+    \item \textbf{Timezone Standardization}: All logs, timestamps (\texttt{created\_at}, \texttt{expires\_at}), and audit trails are synchronized to \textbf{Indian Standard Time (IST - Asia/Kolkata, UTC+5:30)}.
+\end{enumerate}
+
+\end{document}
